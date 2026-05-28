@@ -1,0 +1,567 @@
+{
+  "titles": [
+    "Reproducibility in Clinical AI Requires Modeling Measurement Error",
+    "Measurement Uncertainty in EMR-Derived Clinical AI Pipelines (Figure 1)",
+    "HL7 AI Challenge 2026 Simulator Prompt: Measurement Uncertainty in Clinical AI"
+  ],
+  "domain_summary": "This work addresses how measurement uncertainty in electronic medical record (EMR) data \u2014 arising from pre-analytical laboratory errors, device calibration drift, and threshold-based diagnostic definitions \u2014 systematically corrupts clinical AI training labels, undermines reproducibility, and reduces cross-site transportability of deployed models.",
+  "recommended_backend": "dynamical_system",
+  "rationale": "The core phenomena involve continuous biomarker values (potassium, HbA1c, systolic blood pressure) evolving under additive noise processes from multiple uncertainty sources, with discrete label transitions triggered by threshold crossings. A dynamical system backend naturally handles continuous-state stochastic evolution, threshold-based categorical emission, and sensitivity analysis via parameter sweeps. It also supports the temporal confirmation logic and calibration drift dynamics described in the paper without requiring agent-based overhead.",
+  "state_variables": [
+    {
+      "name": "true_potassium",
+      "description": "True physiological serum potassium concentration of the patient",
+      "unit": "mmol/L",
+      "init_value": 4.2,
+      "range": [
+        3.5,
+        5.5
+      ]
+    },
+    {
+      "name": "measured_potassium",
+      "description": "EMR-recorded potassium value after pre-analytical and analytical error",
+      "unit": "mmol/L",
+      "init_value": null,
+      "range": [
+        2.5,
+        9.0
+      ]
+    },
+    {
+      "name": "hemolysis_flag",
+      "description": "Binary indicator of specimen hemolysis (1=hemolyzed, 0=intact)",
+      "unit": "a.u.",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "hemolysis_bias",
+      "description": "Upward potassium bias introduced by intracellular potassium release during hemolysis",
+      "unit": "mmol/L",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        3.5
+      ]
+    },
+    {
+      "name": "true_hba1c",
+      "description": "True physiological HbA1c percentage reflecting mean glycemia over ~90 days",
+      "unit": "%",
+      "init_value": 6.2,
+      "range": [
+        4.0,
+        12.0
+      ]
+    },
+    {
+      "name": "measured_hba1c",
+      "description": "EMR-recorded HbA1c after inter-assay CV and calibration bias",
+      "unit": "%",
+      "init_value": null,
+      "range": [
+        4.0,
+        13.0
+      ]
+    },
+    {
+      "name": "true_sbp",
+      "description": "True resting systolic blood pressure of the patient",
+      "unit": "mmHg",
+      "init_value": 128.0,
+      "range": [
+        80.0,
+        200.0
+      ]
+    },
+    {
+      "name": "measured_sbp",
+      "description": "EMR-recorded systolic blood pressure including white-coat effect and device noise",
+      "unit": "mmHg",
+      "init_value": null,
+      "range": [
+        60.0,
+        240.0
+      ]
+    },
+    {
+      "name": "white_coat_effect",
+      "description": "Context-dependent additive elevation of blood pressure in clinical settings",
+      "unit": "mmHg",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        30.0
+      ]
+    },
+    {
+      "name": "potassium_label",
+      "description": "AI training label for critical hyperkalemia (1=critical high, 0=normal)",
+      "unit": "a.u.",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "diabetes_label",
+      "description": "AI training label for diabetes diagnosis (1=diabetic, 0=non-diabetic)",
+      "unit": "a.u.",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "hypertension_label",
+      "description": "AI training label for hypertension diagnosis (1=hypertensive, 0=normotensive)",
+      "unit": "a.u.",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "calibration_drift",
+      "description": "Time-dependent multiplicative calibration drift factor for laboratory instruments",
+      "unit": "a.u.",
+      "init_value": 1.0,
+      "range": [
+        0.9,
+        1.1
+      ]
+    },
+    {
+      "name": "label_noise_rate",
+      "description": "Fraction of training samples with incorrect labels due to measurement uncertainty",
+      "unit": "fraction",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "time_step",
+      "description": "Index of repeated measurement occasion for a patient over serial draws",
+      "unit": "draw index",
+      "init_value": 0.0,
+      "range": [
+        0.0,
+        50.0
+      ]
+    }
+  ],
+  "parameters": [
+    {
+      "name": "potassium_critical_threshold",
+      "value": 6.0,
+      "unit": "mmol/L",
+      "source": "extracted",
+      "description": "Critical high potassium alert threshold triggering urgent clinical evaluation in EMR systems"
+    },
+    {
+      "name": "potassium_analytical_sd",
+      "value": 0.15,
+      "unit": "mmol/L",
+      "source": "assumed",
+      "description": "Standard deviation of analytical (instrument) random error for potassium measurement, representing typical ISE-based analyzer CV of ~2-3% at 5 mmol/L"
+    },
+    {
+      "name": "hemolysis_probability",
+      "value": 0.08,
+      "unit": "fraction",
+      "source": "assumed",
+      "description": "Prevalence of hemolyzed specimens in routine phlebotomy, consistent with published pre-analytical error rates of 0.3-10%"
+    },
+    {
+      "name": "hemolysis_bias_mean",
+      "value": 1.8,
+      "unit": "mmol/L",
+      "source": "assumed",
+      "description": "Mean upward potassium bias from moderate-to-severe hemolysis due to intracellular K+ release; clinically, hemolysis can elevate potassium by 0.5-3.5 mmol/L"
+    },
+    {
+      "name": "hemolysis_bias_sd",
+      "value": 0.5,
+      "unit": "mmol/L",
+      "source": "assumed",
+      "description": "Standard deviation of hemolysis-induced potassium bias across specimens"
+    },
+    {
+      "name": "hba1c_diabetes_threshold",
+      "value": 6.5,
+      "unit": "%",
+      "source": "extracted",
+      "description": "ADA diagnostic threshold for diabetes based on HbA1c; values at or above this define the positive label"
+    },
+    {
+      "name": "hba1c_analytical_cv",
+      "value": 0.02,
+      "unit": "fraction",
+      "source": "assumed",
+      "description": "Coefficient of variation for HbA1c inter-assay analytical error (~2% CV is NGSP-certified target)"
+    },
+    {
+      "name": "hba1c_calibration_bias",
+      "value": 0.1,
+      "unit": "%",
+      "source": "assumed",
+      "description": "Systematic inter-platform calibration bias for HbA1c between different analyzer platforms at different sites"
+    },
+    {
+      "name": "hba1c_physiologic_sd",
+      "value": 0.15,
+      "unit": "%",
+      "source": "assumed",
+      "description": "Intra-individual biological variation of HbA1c over serial measurements when glycemic status is stable"
+    },
+    {
+      "name": "sbp_hypertension_threshold",
+      "value": 130.0,
+      "unit": "mmHg",
+      "source": "extracted",
+      "description": "ACC/AHA 2017 Stage 1 hypertension systolic blood pressure threshold; crossings trigger categorical label change"
+    },
+    {
+      "name": "sbp_device_sd",
+      "value": 5.0,
+      "unit": "mmHg",
+      "source": "assumed",
+      "description": "Standard deviation of oscillometric BP device random measurement error, consistent with AAMI/ISO validation standard allowances"
+    },
+    {
+      "name": "sbp_white_coat_mean",
+      "value": 14.0,
+      "unit": "mmHg",
+      "source": "assumed",
+      "description": "Mean white-coat systolic BP elevation in clinic versus ambulatory settings; published estimates range 8-22 mmHg"
+    },
+    {
+      "name": "sbp_white_coat_sd",
+      "value": 6.0,
+      "unit": "mmHg",
+      "source": "assumed",
+      "description": "Inter-individual standard deviation of white-coat BP effect"
+    },
+    {
+      "name": "white_coat_probability",
+      "value": 0.2,
+      "unit": "fraction",
+      "source": "assumed",
+      "description": "Fraction of patients exhibiting clinically significant white-coat hypertension (~15-25% in primary care populations)"
+    },
+    {
+      "name": "sbp_physiologic_sd",
+      "value": 8.0,
+      "unit": "mmHg",
+      "source": "assumed",
+      "description": "Intra-individual physiologic variability of systolic BP across serial clinic measurements, independent of white-coat effect"
+    },
+    {
+      "name": "calibration_drift_rate",
+      "value": 0.001,
+      "unit": "per draw",
+      "source": "assumed",
+      "description": "Linear drift rate of instrument calibration factor per measurement occasion, representing gradual reagent or electrode aging"
+    },
+    {
+      "name": "n_patients",
+      "value": 2000.0,
+      "unit": "patients",
+      "source": "assumed",
+      "description": "Number of simulated patients per scenario in the synthetic dataset"
+    },
+    {
+      "name": "n_serial_draws",
+      "value": 20.0,
+      "unit": "draws",
+      "source": "assumed",
+      "description": "Number of serial measurement occasions per patient for longitudinal label stability analysis"
+    },
+    {
+      "name": "borderline_window_k",
+      "value": 0.5,
+      "unit": "mmol/L",
+      "source": "assumed",
+      "description": "Half-width of the borderline zone around potassium critical threshold used to identify label-vulnerable patients"
+    },
+    {
+      "name": "borderline_window_hba1c",
+      "value": 0.3,
+      "unit": "%",
+      "source": "assumed",
+      "description": "Half-width of the borderline zone around HbA1c diabetes threshold identifying label-unstable patients"
+    },
+    {
+      "name": "borderline_window_sbp",
+      "value": 10.0,
+      "unit": "mmHg",
+      "source": "assumed",
+      "description": "Half-width of the borderline zone around SBP hypertension threshold identifying label-unstable patients"
+    },
+    {
+      "name": "n_sites",
+      "value": 4.0,
+      "unit": "sites",
+      "source": "assumed",
+      "description": "Number of simulated clinical sites with differing measurement protocols for cross-site portability analysis"
+    },
+    {
+      "name": "site_calibration_bias_sd",
+      "value": 0.08,
+      "unit": "fraction",
+      "source": "assumed",
+      "description": "Standard deviation of site-level multiplicative calibration bias factors representing cross-site platform variation"
+    }
+  ],
+  "scenario_plan": [
+    {
+      "label": "Scenario_1_False_Critical_Potassium",
+      "description": "Simulates a population where true potassium is physiologically normal (mean 4.2 mmol/L) but hemolyzed specimens introduce large upward biases that push measured values above the critical threshold of 6.0 mmol/L. Demonstrates how pre-analytical artifact creates false critical-value labels that persist permanently in EMR training data.",
+      "param_overrides": {
+        "true_potassium_mean": 4.2,
+        "true_potassium_sd": 0.4,
+        "hemolysis_probability": 0.08,
+        "hemolysis_bias_mean": 1.8,
+        "hemolysis_bias_sd": 0.5,
+        "potassium_analytical_sd": 0.15,
+        "potassium_critical_threshold": 6.0,
+        "n_patients": 2000
+      }
+    },
+    {
+      "label": "Scenario_2_Borderline_HbA1c_Diabetes_Label",
+      "description": "Simulates serial HbA1c measurements for patients with true HbA1c near the 6.5% diabetes threshold. Inter-assay CV, intra-individual biological variation, and cross-site calibration bias cause repeated label flips between diabetic and non-diabetic categories across draws. Illustrates how borderline patients accumulate inconsistent training labels.",
+      "param_overrides": {
+        "true_hba1c_mean": 6.35,
+        "true_hba1c_sd": 0.25,
+        "hba1c_analytical_cv": 0.02,
+        "hba1c_physiologic_sd": 0.15,
+        "hba1c_calibration_bias": 0.1,
+        "hba1c_diabetes_threshold": 6.5,
+        "n_serial_draws": 20,
+        "n_patients": 2000
+      }
+    },
+    {
+      "label": "Scenario_3_Borderline_SBP_Hypertension_Label",
+      "description": "Simulates serial clinic SBP measurements for patients with true resting SBP near 130 mmHg. Device noise and context-dependent white-coat effect cause oscillation across the ACC/AHA hypertension threshold. White-coat-positive patients show systematically elevated measured SBP even with normal true physiology, driving spurious hypertension labels.",
+      "param_overrides": {
+        "true_sbp_mean": 128.0,
+        "true_sbp_sd": 8.0,
+        "sbp_device_sd": 5.0,
+        "sbp_physiologic_sd": 8.0,
+        "white_coat_probability": 0.2,
+        "sbp_white_coat_mean": 14.0,
+        "sbp_white_coat_sd": 6.0,
+        "sbp_hypertension_threshold": 130.0,
+        "n_serial_draws": 20,
+        "n_patients": 2000
+      }
+    },
+    {
+      "label": "Scenario_4_Calibration_Drift_Cross_Site",
+      "description": "Simulates four clinical sites with differing instrument calibration factors applied to the same patient population's true HbA1c values. Shows how site-level calibration differences shift apparent disease prevalence and generate discordant AI labels for identical physiology, reproducing the cross-site portability gap described in the paper.",
+      "param_overrides": {
+        "n_sites": 4,
+        "site_calibration_bias_sd": 0.08,
+        "true_hba1c_mean": 6.35,
+        "true_hba1c_sd": 0.25,
+        "hba1c_analytical_cv": 0.02,
+        "hba1c_diabetes_threshold": 6.5,
+        "n_patients": 2000
+      }
+    },
+    {
+      "label": "Scenario_5_Sensitivity_Analysis_Threshold_Perturbation",
+      "description": "Sweeps diagnostic thresholds for all three biomarkers across plausible ranges (potassium 5.5-6.5, HbA1c 6.0-7.0, SBP 120-140) and quantifies how label noise rate varies with threshold choice. Demonstrates model fragility near established boundaries and supports the paper's recommendation for multi-threshold sensitivity analysis.",
+      "param_overrides": {
+        "potassium_threshold_min": 5.5,
+        "potassium_threshold_max": 6.5,
+        "hba1c_threshold_min": 6.0,
+        "hba1c_threshold_max": 7.0,
+        "sbp_threshold_min": 120.0,
+        "sbp_threshold_max": 140.0,
+        "n_threshold_steps": 20,
+        "n_patients": 2000
+      }
+    }
+  ],
+  "figure_plan": [
+    {
+      "id": "fig_1_hemolysis_potassium",
+      "type": "scatter",
+      "x_axis": "true_potassium",
+      "y_axis": "measured_potassium",
+      "title": "Scenario 1: Pre-Analytical Hemolysis Bias on Potassium \u2014 True vs. Measured",
+      "inspired_by": "Figure 1 pipeline: Pre-analytical category listing hemolysis/lipemia and specimen handling delays as key uncertainty sources at the measurement stage",
+      "description": "Each point represents one patient draw. Non-hemolyzed samples (blue) cluster tightly around the identity line, showing low analytical noise. Hemolyzed samples (red) are displaced strongly upward, with many crossing the 6.0 mmol/L critical threshold (horizontal dashed line) despite normal true physiology. The plot reveals the stark asymmetry of pre-analytical error: it creates a subpopulation of false critical-high labels that would be indistinguishable from true hyperkalemia in an EMR training dataset."
+    },
+    {
+      "id": "fig_2_hba1c_serial_label_flips",
+      "type": "line",
+      "x_axis": "draw_index",
+      "y_axis": "measured_hba1c",
+      "title": "Scenario 2: Serial HbA1c Label Instability Near 6.5% Diabetes Threshold",
+      "inspired_by": "Paper text: 'A biochemical marker measured above the reference range subsequently normalizes without intervention...such entries persist as categorical signals' and Figure 1 threshold-based coding arrow",
+      "description": "Each line traces the longitudinal measured HbA1c trajectory for a single borderline patient over 20 serial draws. The horizontal dashed line marks the 6.5% diabetes diagnostic threshold. Lines that oscillate across this boundary indicate patients who would receive inconsistent diabetes labels across repeated measurements \u2014 sometimes diabetic, sometimes not \u2014 purely due to measurement uncertainty rather than any biological change. Color encodes the fraction of draws labeled positive, from white (0%) to deep orange (100%), illustrating the gradient of labeling instability."
+    },
+    {
+      "id": "fig_3_sbp_white_coat",
+      "type": "histogram",
+      "x_axis": "measured_sbp",
+      "y_axis": "count",
+      "title": "Scenario 3: Systolic BP Distribution \u2014 White-Coat vs. Non-White-Coat Patients",
+      "inspired_by": "Figure 1 Device & Documentation category: 'Context-dependent readings (e.g., white-coat BP effect)' and paper text on borderline BP readings fluctuating across diagnostic thresholds",
+      "description": "Overlapping histograms compare the distribution of clinic-measured SBP for white-coat-positive patients (orange) and non-white-coat patients (blue), with the vertical dashed line at 130 mmHg marking the hypertension threshold. White-coat patients show a rightward-shifted distribution that extends above 130 mmHg even when their true SBP is sub-threshold, demonstrating how context-dependent measurement bias systematically inflates hypertension label rates. The overlap region near the threshold makes the two groups difficult to distinguish in cross-sectional EMR data."
+    },
+    {
+      "id": "fig_4_label_flip_rate_vs_true_value",
+      "type": "line",
+      "x_axis": "true_biomarker_value",
+      "y_axis": "label_flip_rate",
+      "title": "Label Instability Rate vs. True Biomarker Value for All Three Scenarios",
+      "inspired_by": "Paper text: 'Small fluctuations around diagnostic cutoffs can change categorical assignments without reflecting durable disease states' and recommendation for multi-threshold sensitivity analysis",
+      "description": "Three curves (one per biomarker, normalized to threshold-relative x-axis in units of measurement SD) show how the probability of label inconsistency across serial measurements peaks sharply at the diagnostic threshold and decays as a function of distance from the cutoff. The peak label-flip rate reaches 40-50% for patients within one measurement SD of the threshold. This figure provides an empirical calibration of how measurement error translates to training-data label noise as a function of proximity to diagnostic boundaries, directly quantifying the paper's central claim."
+    },
+    {
+      "id": "fig_5_cross_site_prevalence",
+      "type": "heatmap",
+      "x_axis": "site_id",
+      "y_axis": "calibration_bias_factor",
+      "title": "Scenario 4: Cross-Site Calibration Bias \u2014 Apparent Diabetes Prevalence by Site",
+      "inspired_by": "Figure 1 AI Consequences category: 'Calibration drift at deployment' and 'Reduced cross-site portability'; paper text on models encoding implicit assumptions about measurement protocols",
+      "description": "Heatmap rows represent simulated clinical sites and columns represent bins of site-level calibration bias factor. Cell color encodes the apparent diabetes prevalence (fraction of patients labeled diabetic) at that site under that calibration. Sites with positive bias factors show inflated prevalence; those with negative bias show deflated prevalence \u2014 for an identical underlying patient population. This directly illustrates the paper's argument that between-site calibration differences, not patient heterogeneity, can be the primary driver of discordant AI performance across deployment environments."
+    },
+    {
+      "id": "fig_6_threshold_sensitivity_sweep",
+      "type": "line",
+      "x_axis": "threshold_value",
+      "y_axis": "label_noise_rate",
+      "title": "Scenario 5: Label Noise Rate vs. Diagnostic Threshold for HbA1c, Potassium, and SBP",
+      "inspired_by": "Paper recommendation: 'Model performance should be assessed under alternative plausible cutoff definitions, particularly near established diagnostic boundaries'",
+      "description": "Three curves plot label noise rate (fraction of patients with at least one incorrect label across serial draws) as a function of diagnostic threshold position for HbA1c (6.0-7.0%), potassium (5.5-6.5 mmol/L), and SBP (120-140 mmHg). Each curve peaks near the clinically established threshold where the true-value distribution is densest, and the width of the peak reflects the magnitude of measurement uncertainty for that biomarker. Vertical dashed lines mark the current guideline thresholds. This figure directly supports the paper's sensitivity analysis recommendation and shows that HbA1c exhibits the sharpest threshold sensitivity due to lower biological variability relative to its analytical error."
+    },
+    {
+      "id": "fig_7_pipeline_uncertainty_propagation",
+      "type": "heatmap",
+      "x_axis": "uncertainty_source",
+      "y_axis": "biomarker",
+      "title": "Quantitative Uncertainty Contribution Matrix: Source vs. Biomarker vs. Label Error Rate",
+      "inspired_by": "Figure 1 full pipeline diagram showing Pre-analytical, Device & Documentation, and AI Consequences columns feeding into the EMR Record and AI Model stages",
+      "description": "A 3x3 heatmap with biomarkers (Potassium, HbA1c, SBP) on the y-axis and uncertainty sources (Pre-analytical error, Device/calibration noise, Context-dependent bias) on the x-axis. Cell color encodes the marginal contribution of each uncertainty source to the total label error rate for that biomarker, computed by variance decomposition across Monte Carlo draws. Pre-analytical error dominates for potassium; device calibration drift dominates for HbA1c; context-dependent bias (white-coat effect) dominates for SBP. This figure provides the actionable summary that a measurement-aware AI evaluation framework would prioritize."
+    },
+    {
+      "id": "fig_8_fhir_observation_label_concordance",
+      "type": "scatter",
+      "x_axis": "n_positive_observations",
+      "y_axis": "final_ai_label_probability",
+      "title": "FHIR Observation Concordance vs. AI Label Confidence (All Scenarios)",
+      "inspired_by": "HL7 AI Challenge prompt requirement to use HL7 FHIR R4 standards including LOINC codes for observations and SNOMED CT for conditions",
+      "description": "Each point represents one simulated patient; x-axis counts the number of FHIR Observation resources with a positive (above-threshold) measured value across serial draws, while y-axis shows the AI model's label probability derived from those observations. Color encodes true physiological status (dark=truly positive, light=truly negative). The cluster of truly-negative patients with high positive-observation counts but moderate AI label confidence represents the label-noise-affected population. The figure demonstrates how temporal observation concordance (requiring multiple FHIR Observations to confirm a label) would reduce false-positive training labels, operationalizing the paper's recommendation for temporal confirmation logic."
+    }
+  ],
+  "dataset_schema": [
+    "patient_id",
+    "scenario",
+    "site_id",
+    "draw_index",
+    "true_potassium",
+    "hemolysis_flag",
+    "hemolysis_bias",
+    "analytical_noise_potassium",
+    "measured_potassium",
+    "calibration_factor_potassium",
+    "potassium_label_true",
+    "potassium_label_emr",
+    "potassium_label_error",
+    "true_hba1c",
+    "hba1c_physiologic_noise",
+    "hba1c_analytical_noise",
+    "hba1c_calibration_bias",
+    "measured_hba1c",
+    "calibration_factor_hba1c",
+    "diabetes_label_true",
+    "diabetes_label_emr",
+    "diabetes_label_error",
+    "true_sbp",
+    "sbp_physiologic_noise",
+    "sbp_device_noise",
+    "white_coat_flag",
+    "white_coat_effect",
+    "measured_sbp",
+    "hypertension_label_true",
+    "hypertension_label_emr",
+    "hypertension_label_error",
+    "label_flip_potassium_across_draws",
+    "label_flip_hba1c_across_draws",
+    "label_flip_sbp_across_draws",
+    "total_label_errors",
+    "fhir_loinc_potassium",
+    "fhir_loinc_hba1c",
+    "fhir_loinc_sbp",
+    "fhir_ucum_potassium",
+    "fhir_ucum_hba1c",
+    "fhir_ucum_sbp",
+    "fhir_snomed_diabetes",
+    "fhir_snomed_hypertension",
+    "fhir_observation_status",
+    "threshold_potassium_used",
+    "threshold_hba1c_used",
+    "threshold_sbp_used"
+  ],
+  "simulator_logic": "## Core Simulator Logic\n\n### Initialization\n```\nSET random seed for reproducibility\nLOAD parameters: n_patients=2000, n_serial_draws=20, n_sites=4\nSET FHIR constants:\n  LOINC_K = '2823-3'  # Potassium [Moles/volume] in Serum\n  LOINC_HBA1C = '4548-4'  # HbA1c in Blood\n  LOINC_SBP = '8480-6'  # Systolic BP\n  UCUM_K = 'mmol/L'\n  UCUM_HBA1C = '%'\n  UCUM_SBP = 'mm[Hg]'\n  SNOMED_DIABETES = '73211009'\n  SNOMED_HYPERTENSION = '38341003'\n```\n\n### Per-Scenario Patient Generation\n```\nFOR each scenario in [S1, S2, S3, S4, S5]:\n  FOR patient p in range(n_patients):\n\n    ### SCENARIO 1: False Critical Potassium\n    true_K[p] ~ Normal(mu=4.2, sigma=0.4), clipped to [3.0, 5.8]\n    hemolysis[p] ~ Bernoulli(p=0.08)\n    IF hemolysis[p] == 1:\n      hemolysis_bias[p] ~ Normal(mu=1.8, sigma=0.5), clipped >= 0\n    ELSE:\n      hemolysis_bias[p] = 0.0\n    analytical_noise_K[p] ~ Normal(0, sigma=0.15)\n    calibration_K[p] = 1.0 + drift_per_draw * draw_index  # linear drift\n    measured_K[p] = (true_K[p] + hemolysis_bias[p] + analytical_noise_K[p]) * calibration_K[p]\n    label_K_true[p] = 1 IF true_K[p] >= 6.0 ELSE 0\n    label_K_emr[p] = 1 IF measured_K[p] >= 6.0 ELSE 0\n    label_error_K[p] = ABS(label_K_true[p] - label_K_emr[p])\n\n    ### SCENARIO 2: Borderline HbA1c\n    FOR draw d in range(n_serial_draws):\n      true_HbA1c[p] ~ Normal(mu=6.35, sigma=0.25), clipped to [4.5, 10.0]\n      bio_var[p,d] ~ Normal(0, sigma=0.15)  # intra-individual variation\n      analytical_noise_HbA1c[p,d] = true_HbA1c[p] * CV_analytical  # CV=0.02\n        where noise ~ Normal(0, sigma=true_HbA1c[p]*0.02)\n      site_calib_bias[site] ~ Normal(0, sigma=0.08) [once per site, fixed]\n      calibration_factor_HbA1c = 1.0 + site_calib_bias[site]\n      measured_HbA1c[p,d] = (true_HbA1c[p] + bio_var[p,d] + analytical_noise_HbA1c[p,d]) * calibration_factor_HbA1c\n      label_HbA1c_true[p] = 1 IF true_HbA1c[p] >= 6.5 ELSE 0\n      label_HbA1c_emr[p,d] = 1 IF measured_HbA1c[p,d] >= 6.5 ELSE 0\n    label_flip_HbA1c[p] = 1 IF any(label_HbA1c_emr[p,:] != label_HbA1c_true[p]) ELSE 0\n\n    ### SCENARIO 3: Borderline SBP\n    FOR draw d in range(n_serial_draws):\n      true_SBP[p] ~ Normal(mu=128.0, sigma=8.0), clipped to [90, 200]\n      physio_var[p,d] ~ Normal(0, sigma=8.0)  # visit-to-visit variability\n      device_noise[p,d] ~ Normal(0, sigma=5.0)\n      white_coat[p] ~ Bernoulli(p=0.20) [fixed per patient across draws]\n      IF white_coat[p] == 1:\n        wc_effect[p] ~ Normal(mu=14.0, sigma=6.0), clipped >= 0 [fixed per patient]\n      ELSE:\n        wc_effect[p] = 0.0\n      measured_SBP[p,d] = true_SBP[p] + physio_var[p,d] + device_noise[p,d] + wc_effect[p]\n      label_SBP_true[p] = 1 IF true_SBP[p] >= 130.0 ELSE 0\n      label_SBP_emr[p,d] = 1 IF measured_SBP[p,d] >= 130.0 ELSE 0\n    label_flip_SBP[p] = 1 IF any(label_SBP_emr[p,:] != label_SBP_true[p]) ELSE 0\n\n### SCENARIO 4: Cross-site calibration\n    FOR site s in range(n_sites):\n      site_bias[s] ~ Normal(0, sigma=0.08) [once, fixed]\n      FOR patient p in site population (n_patients/n_sites each):\n        measured_HbA1c_site[p] = measured_HbA1c[p] * (1 + site_bias[s])\n        diabetes_label_site[p] = 1 IF measured_HbA1c_site[p] >= 6.5 ELSE 0\n      site_prevalence[s] = MEAN(diabetes_label_site)\n\n### SCENARIO 5: Threshold sensitivity sweep\n    FOR threshold T in linspace(threshold_min, threshold_max, n_steps):\n      FOR each biomarker B:\n        label_noise[T] = FRACTION of patients where label(measured_B, T) != label(true_B, T)\n        STORE (biomarker, T, label_noise)\n\n### Variance Decomposition (for Fig 7)\n    FOR each biomarker B:\n      Run model with ONLY pre-analytical noise active, compute label_error_rate_preanalytical\n      Run model with ONLY device/calibration noise active, compute label_error_rate_device\n      Run model with ONLY context-dependent bias active, compute label_error_rate_context\n      total_variance = sum of component variances\n      contribution_matrix[B, source] = component_variance / total_variance\n\n### FHIR Resource Annotation (for all records)\n    FOR each (patient, draw, biomarker) triple:\n      fhir_record = {\n        'resourceType': 'Observation',\n        'status': 'final',\n        'code': {'coding': [{'system': 'http://loinc.org', 'code': LOINC_code}]},\n        'valueQuantity': {'value': measured_value, 'unit': UCUM_unit, 'system': 'http://unitsofmeasure.org'},\n        'interpretation': 'HH' if above_critical_threshold else 'N'\n      }\n      IF label_emr == 1:\n        fhir_condition = {\n          'resourceType': 'Condition',\n          'code': {'coding': [{'system': 'http://snomed.info/sct', 'code': SNOMED_code}]}\n        }\n\n### Output\n    WRITE all records to CSV (one row per patient per draw per scenario)\n    COMPUTE aggregate statistics per scenario\n    GENERATE all 8 figures using matplotlib\n    SAVE figures as high-resolution PNG (300 dpi)\n    EXPORT parameter manifest as JSON\n```",
+  "keywords": [
+    "measurement uncertainty",
+    "clinical AI reproducibility",
+    "EMR data quality",
+    "label noise",
+    "diagnostic threshold"
+  ],
+  "categories": [
+    "Biomedical and Health Sciences",
+    "Machine Learning",
+    "Health",
+    "Artificial Intelligence",
+    "Signal Processing"
+  ],
+  "abstract": "This simulator models the propagation of measurement uncertainty through EMR-derived clinical AI pipelines, faithfully reproducing the three core scenarios described in the source paper: false-critical potassium values from hemolyzed specimens, borderline HbA1c fluctuation across the diabetes diagnostic threshold, and borderline systolic blood pressure oscillation across the hypertension threshold under white-coat effect. The simulator generates a synthetic dataset of 2,000 patients with serial measurements across up to 20 draw occasions, implementing stochastic models of pre-analytical error, instrument calibration drift, and context-dependent measurement bias using FHIR R4-annotated observation records with LOINC, SNOMED CT, and UCUM codes. By propagating these uncertainty sources to binary AI training labels, the simulator quantifies label noise rates, label flip probabilities, and cross-site prevalence discordance as functions of proximity to diagnostic boundaries. Researchers, educators, and clinical AI developers can use the simulator to validate measurement-aware evaluation frameworks, test temporal confirmation logic, and generate evidence for regulatory submissions under the HL7 AI Challenge 2026 standards.",
+  "value_proposition": {
+    "target_audiences": [
+      "Clinical AI developers and data scientists building or validating models on EMR data",
+      "Healthcare informaticists and health system analysts evaluating data quality and FHIR interoperability",
+      "Biomedical researchers, medical educators, and regulators studying AI reproducibility and measurement standards"
+    ],
+    "use_cases": [
+      "A clinical AI team can use the synthetic dataset to benchmark their label-cleaning pipeline by injecting known measurement errors and measuring how well their preprocessing recovers true labels.",
+      "A health informatics educator can run the simulator interactively to demonstrate to students how diagnostic threshold choice alters disease prevalence in training data without any change in underlying patient physiology.",
+      "A regulatory scientist can use the cross-site calibration scenario to generate evidence that a proposed AI model's performance degrades under realistic inter-site measurement variability, supporting a risk-stratified deployment argument.",
+      "A FHIR implementation team can extract the annotated synthetic Observation and Condition resources to test their ETL pipelines against realistic but controlled measurement-noisy clinical records.",
+      "A biostatistician can run the threshold sensitivity sweep to identify which of their model's biomarker inputs is most sensitive to guideline threshold changes, prioritizing uncertainty quantification efforts."
+    ],
+    "summary": "Clinical AI developers routinely treat EMR values as ground truth, yet the source paper demonstrates that pre-analytical errors, calibration drift, and threshold-based coding introduce systematic label noise that is invisible to standard reproducibility audits. This simulator bundle uniquely operationalizes that conceptual argument as executable, reproducible Python code that generates quantitatively grounded synthetic data spanning three clinically important biomarkers, five scenarios, and four simulated sites. Unlike the source paper alone, the simulator allows users to interactively explore how changes in hemolysis rates, calibration bias magnitude, white-coat effect prevalence, or diagnostic threshold position propagate into AI training label error rates \u2014 providing an empirical learning tool unavailable from reading the text. The FHIR R4 annotation layer makes the synthetic data directly usable in HL7-compliant AI development and evaluation pipelines, bridging the gap between the paper's conceptual recommendations and the practical engineering work required to implement measurement-aware clinical AI."
+  },
+  "data_format": [
+    "CSV",
+    "PNG",
+    "JSON"
+  ],
+  "raw_analysis": "{\n  \"titles\": [\n    \"Reproducibility in Clinical AI Requires Modeling Measurement Error\",\n    \"Measurement Uncertainty in EMR-Derived Clinical AI Pipelines (Figure 1)\",\n    \"HL7 AI Challenge 2026 Simulator Prompt: Measurement Uncertainty in Clinical AI\"\n  ],\n  \"domain_summary\": \"This work addresses how measurement uncertainty in electronic medical record (EMR) data \u2014 arising from pre-analytical laboratory errors, device calibration drift, and threshold-based diagnostic definitions \u2014 systematically corrupts clinical AI training labels, undermines reproducibility, and reduces cross-site transportability of deployed models.\",\n  \"recommended_backend\": \"dynamical_system\",\n  \"rationale\": \"The core phenomena involve continuous biomarker values (potassium, HbA1c, systolic blood pressure) evolving under additive noise processes from multiple uncertainty sources, with discrete label transitions triggered by threshold crossings. A dynamical system backend naturally handles continuous-state stochastic evolution, threshold-based categorical emission, and sensitivity analysis via parameter sweeps. It also supports the temporal confirmation logic and calibration drift dynamics described in the paper without requiring agent-based overhead.\",\n  \"state_variables\": [\n    {\n      \"name\": \"true_potassium\",\n      \"description\": \"True physiological serum potassium concentration of the patient\",\n      \"unit\": \"mmol/L\",\n      \"init_value\": 4.2,\n      \"range\": [3.5, 5.5]\n    },\n    {\n      \"name\": \"measured_potassium\",\n      \"description\": \"EMR-recorded potassium value after pre-analytical and analytical error\",\n      \"unit\": \"mmol/L\",\n      \"init_value\": null,\n      \"range\": [2.5, 9.0]\n    },\n    {\n      \"name\": \"hemolysis_flag\",\n      \"description\": \"Binary indicator of specimen hemolysis (1=hemolyzed, 0=intact)\",\n      \"unit\": \"a.u.\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 1.0]\n    },\n    {\n      \"name\": \"hemolysis_bias\",\n      \"description\": \"Upward potassium bias introduced by intracellular potassium release during hemolysis\",\n      \"unit\": \"mmol/L\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 3.5]\n    },\n    {\n      \"name\": \"true_hba1c\",\n      \"description\": \"True physiological HbA1c percentage reflecting mean glycemia over ~90 days\",\n      \"unit\": \"%\",\n      \"init_value\": 6.2,\n      \"range\": [4.0, 12.0]\n    },\n    {\n      \"name\": \"measured_hba1c\",\n      \"description\": \"EMR-recorded HbA1c after inter-assay CV and calibration bias\",\n      \"unit\": \"%\",\n      \"init_value\": null,\n      \"range\": [4.0, 13.0]\n    },\n    {\n      \"name\": \"true_sbp\",\n      \"description\": \"True resting systolic blood pressure of the patient\",\n      \"unit\": \"mmHg\",\n      \"init_value\": 128.0,\n      \"range\": [80.0, 200.0]\n    },\n    {\n      \"name\": \"measured_sbp\",\n      \"description\": \"EMR-recorded systolic blood pressure including white-coat effect and device noise\",\n      \"unit\": \"mmHg\",\n      \"init_value\": null,\n      \"range\": [60.0, 240.0]\n    },\n    {\n      \"name\": \"white_coat_effect\",\n      \"description\": \"Context-dependent additive elevation of blood pressure in clinical settings\",\n      \"unit\": \"mmHg\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 30.0]\n    },\n    {\n      \"name\": \"potassium_label\",\n      \"description\": \"AI training label for critical hyperkalemia (1=critical high, 0=normal)\",\n      \"unit\": \"a.u.\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 1.0]\n    },\n    {\n      \"name\": \"diabetes_label\",\n      \"description\": \"AI training label for diabetes diagnosis (1=diabetic, 0=non-diabetic)\",\n      \"unit\": \"a.u.\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 1.0]\n    },\n    {\n      \"name\": \"hypertension_label\",\n      \"description\": \"AI training label for hypertension diagnosis (1=hypertensive, 0=normotensive)\",\n      \"unit\": \"a.u.\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 1.0]\n    },\n    {\n      \"name\": \"calibration_drift\",\n      \"description\": \"Time-dependent multiplicative calibration drift factor for laboratory instruments\",\n      \"unit\": \"a.u.\",\n      \"init_value\": 1.0,\n      \"range\": [0.90, 1.10]\n    },\n    {\n      \"name\": \"label_noise_rate\",\n      \"description\": \"Fraction of training samples with incorrect labels due to measurement uncertainty\",\n      \"unit\": \"fraction\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 1.0]\n    },\n    {\n      \"name\": \"time_step\",\n      \"description\": \"Index of repeated measurement occasion for a patient over serial draws\",\n      \"unit\": \"draw index\",\n      \"init_value\": 0.0,\n      \"range\": [0.0, 50.0]\n    }\n  ],\n  \"parameters\": [\n    {\n      \"name\": \"potassium_critical_threshold\",\n      \"value\": 6.0,\n      \"unit\": \"mmol/L\",\n      \"source\": \"extracted\",\n      \"description\": \"Critical high potassium alert threshold triggering urgent clinical evaluation in EMR systems\"\n    },\n    {\n      \"name\": \"potassium_analytical_sd\",\n      \"value\": 0.15,\n      \"unit\": \"mmol/L\",\n      \"source\": \"assumed\",\n      \"description\": \"Standard deviation of analytical (instrument) random error for potassium measurement, representing typical ISE-based analyzer CV of ~2-3% at 5 mmol/L\"\n    },\n    {\n      \"name\": \"hemolysis_probability\",\n      \"value\": 0.08,\n      \"unit\": \"fraction\",\n      \"source\": \"assumed\",\n      \"description\": \"Prevalence of hemolyzed specimens in routine phlebotomy, consistent with published pre-analytical error rates of 0.3-10%\"\n    },\n    {\n      \"name\": \"hemolysis_bias_mean\",\n      \"value\": 1.8,\n      \"unit\": \"mmol/L\",\n      \"source\": \"assumed\",\n      \"description\": \"Mean upward potassium bias from moderate-to-severe hemolysis due to intracellular K+ release; clinically, hemolysis can elevate potassium by 0.5-3.5 mmol/L\"\n    },\n    {\n      \"name\": \"hemolysis_bias_sd\",\n      \"value\": 0.5,\n      \"unit\": \"mmol/L\",\n      \"source\": \"assumed\",\n      \"description\": \"Standard deviation of hemolysis-induced potassium bias across specimens\"\n    },\n    {\n      \"name\": \"hba1c_diabetes_threshold\",\n      \"value\": 6.5,\n      \"unit\": \"%\",\n      \"source\": \"extracted\",\n      \"description\": \"ADA diagnostic threshold for diabetes based on HbA1c; values at or above this define the positive label\"\n    },\n    {\n      \"name\": \"hba1c_analytical_cv\",\n      \"value\": 0.02,\n      \"unit\": \"fraction\",\n      \"source\": \"assumed\",\n      \"description\": \"Coefficient of variation for HbA1c inter-assay analytical error (~2% CV is NGSP-certified target)\"\n    },\n    {\n      \"name\": \"hba1c_calibration_bias\",\n      \"value\": 0.1,\n      \"unit\": \"%\",\n      \"source\": \"assumed\",\n      \"description\": \"Systematic inter-platform calibration bias for HbA1c between different analyzer platforms at different sites\"\n    },\n    {\n      \"name\": \"hba1c_physiologic_sd\",\n      \"value\": 0.15,\n      \"unit\": \"%\",\n      \"source\": \"assumed\",\n      \"description\": \"Intra-individual biological variation of HbA1c over serial measurements when glycemic status is stable\"\n    },\n    {\n      \"name\": \"sbp_hypertension_threshold\",\n      \"value\": 130.0,\n      \"unit\": \"mmHg\",\n      \"source\": \"extracted\",\n      \"description\": \"ACC/AHA 2017 Stage 1 hypertension systolic blood pressure threshold; crossings trigger categorical label change\"\n    },\n    {\n      \"name\": \"sbp_device_sd\",\n      \"value\": 5.0,\n      \"unit\": \"mmHg\",\n      \"source\": \"assumed\",\n      \"description\": \"Standard deviation of oscillometric BP device random measurement error, consistent with AAMI/ISO validation standard allowances\"\n    },\n    {\n      \"name\": \"sbp_white_coat_mean\",\n      \"value\": 14.0,\n      \"unit\": \"mmHg\",\n      \"source\": \"assumed\",\n      \"description\": \"Mean white-coat systolic BP elevation in clinic versus ambulatory settings; published estimates range 8-22 mmHg\"\n    },\n    {\n      \"name\": \"sbp_white_coat_sd\",\n      \"value\": 6.0,\n      \"unit\": \"mmHg\",\n      \"source\": \"assumed\",\n      \"description\": \"Inter-individual standard deviation of white-coat BP effect\"\n    },\n    {\n      \"name\": \"white_coat_probability\",\n      \"value\": 0.20,\n      \"unit\": \"fraction\",\n      \"source\": \"assumed\",\n      \"description\": \"Fraction of patients exhibiting clinically significant white-coat hypertension (~15-25% in primary care populations)\"\n    },\n    {\n      \"name\": \"sbp_physiologic_sd\",\n      \"value\": 8.0,\n      \"unit\": \"mmHg\",\n      \"source\": \"assumed\",\n      \"description\": \"Intra-individual physiologic variability of systolic BP across serial clinic measurements, independent of white-coat effect\"\n    },\n    {\n      \"name\": \"calibration_drift_rate\",\n      \"value\": 0.001,\n      \"unit\": \"per draw\",\n      \"source\": \"assumed\",\n      \"description\": \"Linear drift rate of instrument calibration factor per measurement occasion, representing gradual reagent or electrode aging\"\n    },\n    {\n      \"name\": \"n_patients\",\n      \"value\": 2000.0,\n      \"unit\": \"patients\",\n      \"source\": \"assumed\",\n      \"description\": \"Number of simulated patients per scenario in the synthetic dataset\"\n    },\n    {\n      \"name\": \"n_serial_draws\",\n      \"value\": 20.0,\n      \"unit\": \"draws\",\n      \"source\": \"assumed\",\n      \"description\": \"Number of serial measurement occasions per patient for longitudinal label stability analysis\"\n    },\n    {\n      \"name\": \"borderline_window_k\",\n      \"value\": 0.5,\n      \"unit\": \"mmol/L\",\n      \"source\": \"assumed\",\n      \"description\": \"Half-width of the borderline zone around potassium critical threshold used to identify label-vulnerable patients\"\n    },\n    {\n      \"name\": \"borderline_window_hba1c\",\n      \"value\": 0.3,\n      \"unit\": \"%\",\n      \"source\": \"assumed\",\n      \"description\": \"Half-width of the borderline zone around HbA1c diabetes threshold identifying label-unstable patients\"\n    },\n    {\n      \"name\": \"borderline_window_sbp\",\n      \"value\": 10.0,\n      \"unit\": \"mmHg\",\n      \"source\": \"assumed\",\n      \"description\": \"Half-width of the borderline zone around SBP hypertension threshold identifying label-unstable patients\"\n    },\n    {\n      \"name\": \"n_sites\",\n      \"value\": 4.0,\n      \"unit\": \"sites\",\n      \"source\": \"assumed\",\n      \"description\": \"Number of simulated clinical sites with differing measurement protocols for cross-site portability analysis\"\n    },\n    {\n      \"name\": \"site_calibration_bias_sd\",\n      \"value\": 0.08,\n      \"unit\": \"fraction\",\n      \"source\": \"assumed\",\n      \"description\": \"Standard deviation of site-level multiplicative calibration bias factors representing cross-site platform variation\"\n    }\n  ],\n  \"scenario_plan\": [\n    {\n      \"label\": \"Scenario_1_False_Critical_Potassium\",\n      \"description\": \"Simulates a population where true potassium is physiologically normal (mean 4.2 mmol/L) but hemolyzed specimens introduce large upward biases that push measured values above the critical threshold of 6.0 mmol/L. Demonstrates how pre-analytical artifact creates false critical-value labels that persist permanently in EMR training data.\",\n      \"param_overrides\": {\n        \"true_potassium_mean\": 4.2,\n        \"true_potassium_sd\": 0.4,\n        \"hemolysis_probability\": 0.08,\n        \"hemolysis_bias_mean\": 1.8,\n        \"hemolysis_bias_sd\": 0.5,\n        \"potassium_analytical_sd\": 0.15,\n        \"potassium_critical_threshold\": 6.0,\n        \"n_patients\": 2000\n      }\n    },\n    {\n      \"label\": \"Scenario_2_Borderline_HbA1c_Diabetes_Label\",\n      \"description\": \"Simulates serial HbA1c measurements for patients with true HbA1c near the 6.5% diabetes threshold. Inter-assay CV, intra-individual biological variation, and cross-site calibration bias cause repeated label flips between diabetic and non-diabetic categories across draws. Illustrates how borderline patients accumulate inconsistent training labels.\",\n      \"param_overrides\": {\n        \"true_hba1c_mean\": 6.35,\n        \"true_hba1c_sd\": 0.25,\n        \"hba1c_analytical_cv\": 0.02,\n        \"hba1c_physiologic_sd\": 0.15,\n        \"hba1c_calibration_bias\": 0.1,\n        \"hba1c_diabetes_threshold\": 6.5,\n        \"n_serial_draws\": 20,\n        \"n_patients\": 2000\n      }\n    },\n    {\n      \"label\": \"Scenario_3_Borderline_SBP_Hypertension_Label\",\n      \"description\": \"Simulates serial clinic SBP measurements for patients with true resting SBP near 130 mmHg. Device noise and context-dependent white-coat effect cause oscillation across the ACC/AHA hypertension threshold. White-coat-positive patients show systematically elevated measured SBP even with normal true physiology, driving spurious hypertension labels.\",\n      \"param_overrides\": {\n        \"true_sbp_mean\": 128.0,\n        \"true_sbp_sd\": 8.0,\n        \"sbp_device_sd\": 5.0,\n        \"sbp_physiologic_sd\": 8.0,\n        \"white_coat_probability\": 0.20,\n        \"sbp_white_coat_mean\": 14.0,\n        \"sbp_white_coat_sd\": 6.0,\n        \"sbp_hypertension_threshold\": 130.0,\n        \"n_serial_draws\": 20,\n        \"n_patients\": 2000\n      }\n    },\n    {\n      \"label\": \"Scenario_4_Calibration_Drift_Cross_Site\",\n      \"description\": \"Simulates four clinical sites with differing instrument calibration factors applied to the same patient population's true HbA1c values. Shows how site-level calibration differences shift apparent disease prevalence and generate discordant AI labels for identical physiology, reproducing the cross-site portability gap described in the paper.\",\n      \"param_overrides\": {\n        \"n_sites\": 4,\n        \"site_calibration_bias_sd\": 0.08,\n        \"true_hba1c_mean\": 6.35,\n        \"true_hba1c_sd\": 0.25,\n        \"hba1c_analytical_cv\": 0.02,\n        \"hba1c_diabetes_threshold\": 6.5,\n        \"n_patients\": 2000\n      }\n    },\n    {\n      \"label\": \"Scenario_5_Sensitivity_Analysis_Threshold_Perturbation\",\n      \"description\": \"Sweeps diagnostic thresholds for all three biomarkers across plausible ranges (potassium 5.5-6.5, HbA1c 6.0-7.0, SBP 120-140) and quantifies how label noise rate varies with threshold choice. Demonstrates model fragility near established boundaries and supports the paper's recommendation for multi-threshold sensitivity analysis.\",\n      \"param_overrides\": {\n        \"potassium_threshold_min\": 5.5,\n        \"potassium_threshold_max\": 6.5,\n        \"hba1c_threshold_min\": 6.0,\n        \"hba1c_threshold_max\": 7.0,\n        \"sbp_threshold_min\": 120.0,\n        \"sbp_threshold_max\": 140.0,\n        \"n_threshold_steps\": 20,\n        \"n_patients\": 2000\n      }\n    }\n  ],\n  \"figure_plan\": [\n    {\n      \"id\": \"fig_1_hemolysis_potassium\",\n      \"type\": \"scatter\",\n      \"x_axis\": \"true_potassium\",\n      \"y_axis\": \"measured_potassium\",\n      \"title\": \"Scenario 1: Pre-Analytical Hemolysis Bias on Potassium \u2014 True vs. Measured\",\n      \"inspired_by\": \"Figure 1 pipeline: Pre-analytical category listing hemolysis/lipemia and specimen handling delays as key uncertainty sources at the measurement stage\",\n      \"description\": \"Each point represents one patient draw. Non-hemolyzed samples (blue) cluster tightly around the identity line, showing low analytical noise. Hemolyzed samples (red) are displaced strongly upward, with many crossing the 6.0 mmol/L critical threshold (horizontal dashed line) despite normal true physiology. The plot reveals the stark asymmetry of pre-analytical error: it creates a subpopulation of false critical-high labels that would be indistinguishable from true hyperkalemia in an EMR training dataset.\"\n    },\n    {\n      \"id\": \"fig_2_hba1c_serial_label_flips\",\n      \"type\": \"line\",\n      \"x_axis\": \"draw_index\",\n      \"y_axis\": \"measured_hba1c\",\n      \"title\": \"Scenario 2: Serial HbA1c Label Instability Near 6.5% Diabetes Threshold\",\n      \"inspired_by\": \"Paper text: 'A biochemical marker measured above the reference range subsequently normalizes without intervention...such entries persist as categorical signals' and Figure 1 threshold-based coding arrow\",\n      \"description\": \"Each line traces the longitudinal measured HbA1c trajectory for a single borderline patient over 20 serial draws. The horizontal dashed line marks the 6.5% diabetes diagnostic threshold. Lines that oscillate across this boundary indicate patients who would receive inconsistent diabetes labels across repeated measurements \u2014 sometimes diabetic, sometimes not \u2014 purely due to measurement uncertainty rather than any biological change. Color encodes the fraction of draws labeled positive, from white (0%) to deep orange (100%), illustrating the gradient of labeling instability.\"\n    },\n    {\n      \"id\": \"fig_3_sbp_white_coat\",\n      \"type\": \"histogram\",\n      \"x_axis\": \"measured_sbp\",\n      \"y_axis\": \"count\",\n      \"title\": \"Scenario 3: Systolic BP Distribution \u2014 White-Coat vs. Non-White-Coat Patients\",\n      \"inspired_by\": \"Figure 1 Device & Documentation category: 'Context-dependent readings (e.g., white-coat BP effect)' and paper text on borderline BP readings fluctuating across diagnostic thresholds\",\n      \"description\": \"Overlapping histograms compare the distribution of clinic-measured SBP for white-coat-positive patients (orange) and non-white-coat patients (blue), with the vertical dashed line at 130 mmHg marking the hypertension threshold. White-coat patients show a rightward-shifted distribution that extends above 130 mmHg even when their true SBP is sub-threshold, demonstrating how context-dependent measurement bias systematically inflates hypertension label rates. The overlap region near the threshold makes the two groups difficult to distinguish in cross-sectional EMR data.\"\n    },\n    {\n      \"id\": \"fig_4_label_flip_rate_vs_true_value\",\n      \"type\": \"line\",\n      \"x_axis\": \"true_biomarker_value\",\n      \"y_axis\": \"label_flip_rate\",\n      \"title\": \"Label Instability Rate vs. True Biomarker Value for All Three Scenarios\",\n      \"inspired_by\": \"Paper text: 'Small fluctuations around diagnostic cutoffs can change categorical assignments without reflecting durable disease states' and recommendation for multi-threshold sensitivity analysis\",\n      \"description\": \"Three curves (one per biomarker, normalized to threshold-relative x-axis in units of measurement SD) show how the probability of label inconsistency across serial measurements peaks sharply at the diagnostic threshold and decays as a function of distance from the cutoff. The peak label-flip rate reaches 40-50% for patients within one measurement SD of the threshold. This figure provides an empirical calibration of how measurement error translates to training-data label noise as a function of proximity to diagnostic boundaries, directly quantifying the paper's central claim.\"\n    },\n    {\n      \"id\": \"fig_5_cross_site_prevalence\",\n      \"type\": \"heatmap\",\n      \"x_axis\": \"site_id\",\n      \"y_axis\": \"calibration_bias_factor\",\n      \"title\": \"Scenario 4: Cross-Site Calibration Bias \u2014 Apparent Diabetes Prevalence by Site\",\n      \"inspired_by\": \"Figure 1 AI Consequences category: 'Calibration drift at deployment' and 'Reduced cross-site portability'; paper text on models encoding implicit assumptions about measurement protocols\",\n      \"description\": \"Heatmap rows represent simulated clinical sites and columns represent bins of site-level calibration bias factor. Cell color encodes the apparent diabetes prevalence (fraction of patients labeled diabetic) at that site under that calibration. Sites with positive bias factors show inflated prevalence; those with negative bias show deflated prevalence \u2014 for an identical underlying patient population. This directly illustrates the paper's argument that between-site calibration differences, not patient heterogeneity, can be the primary driver of discordant AI performance across deployment environments.\"\n    },\n    {\n      \"id\": \"fig_6_threshold_sensitivity_sweep\",\n      \"type\": \"line\",\n      \"x_axis\": \"threshold_value\",\n      \"y_axis\": \"label_noise_rate\",\n      \"title\": \"Scenario 5: Label Noise Rate vs. Diagnostic Threshold for HbA1c, Potassium, and SBP\",\n      \"inspired_by\": \"Paper recommendation: 'Model performance should be assessed under alternative plausible cutoff definitions, particularly near established diagnostic boundaries'\",\n      \"description\": \"Three curves plot label noise rate (fraction of patients with at least one incorrect label across serial draws) as a function of diagnostic threshold position for HbA1c (6.0-7.0%), potassium (5.5-6.5 mmol/L), and SBP (120-140 mmHg). Each curve peaks near the clinically established threshold where the true-value distribution is densest, and the width of the peak reflects the magnitude of measurement uncertainty for that biomarker. Vertical dashed lines mark the current guideline thresholds. This figure directly supports the paper's sensitivity analysis recommendation and shows that HbA1c exhibits the sharpest threshold sensitivity due to lower biological variability relative to its analytical error.\"\n    },\n    {\n      \"id\": \"fig_7_pipeline_uncertainty_propagation\",\n      \"type\": \"heatmap\",\n      \"x_axis\": \"uncertainty_source\",\n      \"y_axis\": \"biomarker\",\n      \"title\": \"Quantitative Uncertainty Contribution Matrix: Source vs. Biomarker vs. Label Error Rate\",\n      \"inspired_by\": \"Figure 1 full pipeline diagram showing Pre-analytical, Device & Documentation, and AI Consequences columns feeding into the EMR Record and AI Model stages\",\n      \"description\": \"A 3x3 heatmap with biomarkers (Potassium, HbA1c, SBP) on the y-axis and uncertainty sources (Pre-analytical error, Device/calibration noise, Context-dependent bias) on the x-axis. Cell color encodes the marginal contribution of each uncertainty source to the total label error rate for that biomarker, computed by variance decomposition across Monte Carlo draws. Pre-analytical error dominates for potassium; device calibration drift dominates for HbA1c; context-dependent bias (white-coat effect) dominates for SBP. This figure provides the actionable summary that a measurement-aware AI evaluation framework would prioritize.\"\n    },\n    {\n      \"id\": \"fig_8_fhir_observation_label_concordance\",\n      \"type\": \"scatter\",\n      \"x_axis\": \"n_positive_observations\",\n      \"y_axis\": \"final_ai_label_probability\",\n      \"title\": \"FHIR Observation Concordance vs. AI Label Confidence (All Scenarios)\",\n      \"inspired_by\": \"HL7 AI Challenge prompt requirement to use HL7 FHIR R4 standards including LOINC codes for observations and SNOMED CT for conditions\",\n      \"description\": \"Each point represents one simulated patient; x-axis counts the number of FHIR Observation resources with a positive (above-threshold) measured value across serial draws, while y-axis shows the AI model's label probability derived from those observations. Color encodes true physiological status (dark=truly positive, light=truly negative). The cluster of truly-negative patients with high positive-observation counts but moderate AI label confidence represents the label-noise-affected population. The figure demonstrates how temporal observation concordance (requiring multiple FHIR Observations to confirm a label) would reduce false-positive training labels, operationalizing the paper's recommendation for temporal confirmation logic.\"\n    }\n  ],\n  \"dataset_schema\": [\n    \"patient_id\",\n    \"scenario\",\n    \"site_id\",\n    \"draw_index\",\n    \"true_potassium\",\n    \"hemolysis_flag\",\n    \"hemolysis_bias\",\n    \"analytical_noise_potassium\",\n    \"measured_potassium\",\n    \"calibration_factor_potassium\",\n    \"potassium_label_true\",\n    \"potassium_label_emr\",\n    \"potassium_label_error\",\n    \"true_hba1c\",\n    \"hba1c_physiologic_noise\",\n    \"hba1c_analytical_noise\",\n    \"hba1c_calibration_bias\",\n    \"measured_hba1c\",\n    \"calibration_factor_hba1c\",\n    \"diabetes_label_true\",\n    \"diabetes_label_emr\",\n    \"diabetes_label_error\",\n    \"true_sbp\",\n    \"sbp_physiologic_noise\",\n    \"sbp_device_noise\",\n    \"white_coat_flag\",\n    \"white_coat_effect\",\n    \"measured_sbp\",\n    \"hypertension_label_true\",\n    \"hypertension_label_emr\",\n    \"hypertension_label_error\",\n    \"label_flip_potassium_across_draws\",\n    \"label_flip_hba1c_across_draws\",\n    \"label_flip_sbp_across_draws\",\n    \"total_label_errors\",\n    \"fhir_loinc_potassium\",\n    \"fhir_loinc_hba1c\",\n    \"fhir_loinc_sbp\",\n    \"fhir_ucum_potassium\",\n    \"fhir_ucum_hba1c\",\n    \"fhir_ucum_sbp\",\n    \"fhir_snomed_diabetes\",\n    \"fhir_snomed_hypertension\",\n    \"fhir_observation_status\",\n    \"threshold_potassium_used\",\n    \"threshold_hba1c_used\",\n    \"threshold_sbp_used\"\n  ],\n  \"simulator_logic\": \"## Core Simulator Logic\\n\\n### Initialization\\n```\\nSET random seed for reproducibility\\nLOAD parameters: n_patients=2000, n_serial_draws=20, n_sites=4\\nSET FHIR constants:\\n  LOINC_K = '2823-3'  # Potassium [Moles/volume] in Serum\\n  LOINC_HBA1C = '4548-4'  # HbA1c in Blood\\n  LOINC_SBP = '8480-6'  # Systolic BP\\n  UCUM_K = 'mmol/L'\\n  UCUM_HBA1C = '%'\\n  UCUM_SBP = 'mm[Hg]'\\n  SNOMED_DIABETES = '73211009'\\n  SNOMED_HYPERTENSION = '38341003'\\n```\\n\\n### Per-Scenario Patient Generation\\n```\\nFOR each scenario in [S1, S2, S3, S4, S5]:\\n  FOR patient p in range(n_patients):\\n\\n    ### SCENARIO 1: False Critical Potassium\\n    true_K[p] ~ Normal(mu=4.2, sigma=0.4), clipped to [3.0, 5.8]\\n    hemolysis[p] ~ Bernoulli(p=0.08)\\n    IF hemolysis[p] == 1:\\n      hemolysis_bias[p] ~ Normal(mu=1.8, sigma=0.5), clipped >= 0\\n    ELSE:\\n      hemolysis_bias[p] = 0.0\\n    analytical_noise_K[p] ~ Normal(0, sigma=0.15)\\n    calibration_K[p] = 1.0 + drift_per_draw * draw_index  # linear drift\\n    measured_K[p] = (true_K[p] + hemolysis_bias[p] + analytical_noise_K[p]) * calibration_K[p]\\n    label_K_true[p] = 1 IF true_K[p] >= 6.0 ELSE 0\\n    label_K_emr[p] = 1 IF measured_K[p] >= 6.0 ELSE 0\\n    label_error_K[p] = ABS(label_K_true[p] - label_K_emr[p])\\n\\n    ### SCENARIO 2: Borderline HbA1c\\n    FOR draw d in range(n_serial_draws):\\n      true_HbA1c[p] ~ Normal(mu=6.35, sigma=0.25), clipped to [4.5, 10.0]\\n      bio_var[p,d] ~ Normal(0, sigma=0.15)  # intra-individual variation\\n      analytical_noise_HbA1c[p,d] = true_HbA1c[p] * CV_analytical  # CV=0.02\\n        where noise ~ Normal(0, sigma=true_HbA1c[p]*0.02)\\n      site_calib_bias[site] ~ Normal(0, sigma=0.08) [once per site, fixed]\\n      calibration_factor_HbA1c = 1.0 + site_calib_bias[site]\\n      measured_HbA1c[p,d] = (true_HbA1c[p] + bio_var[p,d] + analytical_noise_HbA1c[p,d]) * calibration_factor_HbA1c\\n      label_HbA1c_true[p] = 1 IF true_HbA1c[p] >= 6.5 ELSE 0\\n      label_HbA1c_emr[p,d] = 1 IF measured_HbA1c[p,d] >= 6.5 ELSE 0\\n    label_flip_HbA1c[p] = 1 IF any(label_HbA1c_emr[p,:] != label_HbA1c_true[p]) ELSE 0\\n\\n    ### SCENARIO 3: Borderline SBP\\n    FOR draw d in range(n_serial_draws):\\n      true_SBP[p] ~ Normal(mu=128.0, sigma=8.0), clipped to [90, 200]\\n      physio_var[p,d] ~ Normal(0, sigma=8.0)  # visit-to-visit variability\\n      device_noise[p,d] ~ Normal(0, sigma=5.0)\\n      white_coat[p] ~ Bernoulli(p=0.20) [fixed per patient across draws]\\n      IF white_coat[p] == 1:\\n        wc_effect[p] ~ Normal(mu=14.0, sigma=6.0), clipped >= 0 [fixed per patient]\\n      ELSE:\\n        wc_effect[p] = 0.0\\n      measured_SBP[p,d] = true_SBP[p] + physio_var[p,d] + device_noise[p,d] + wc_effect[p]\\n      label_SBP_true[p] = 1 IF true_SBP[p] >= 130.0 ELSE 0\\n      label_SBP_emr[p,d] = 1 IF measured_SBP[p,d] >= 130.0 ELSE 0\\n    label_flip_SBP[p] = 1 IF any(label_SBP_emr[p,:] != label_SBP_true[p]) ELSE 0\\n\\n### SCENARIO 4: Cross-site calibration\\n    FOR site s in range(n_sites):\\n      site_bias[s] ~ Normal(0, sigma=0.08) [once, fixed]\\n      FOR patient p in site population (n_patients/n_sites each):\\n        measured_HbA1c_site[p] = measured_HbA1c[p] * (1 + site_bias[s])\\n        diabetes_label_site[p] = 1 IF measured_HbA1c_site[p] >= 6.5 ELSE 0\\n      site_prevalence[s] = MEAN(diabetes_label_site)\\n\\n### SCENARIO 5: Threshold sensitivity sweep\\n    FOR threshold T in linspace(threshold_min, threshold_max, n_steps):\\n      FOR each biomarker B:\\n        label_noise[T] = FRACTION of patients where label(measured_B, T) != label(true_B, T)\\n        STORE (biomarker, T, label_noise)\\n\\n### Variance Decomposition (for Fig 7)\\n    FOR each biomarker B:\\n      Run model with ONLY pre-analytical noise active, compute label_error_rate_preanalytical\\n      Run model with ONLY device/calibration noise active, compute label_error_rate_device\\n      Run model with ONLY context-dependent bias active, compute label_error_rate_context\\n      total_variance = sum of component variances\\n      contribution_matrix[B, source] = component_variance / total_variance\\n\\n### FHIR Resource Annotation (for all records)\\n    FOR each (patient, draw, biomarker) triple:\\n      fhir_record = {\\n        'resourceType': 'Observation',\\n        'status': 'final',\\n        'code': {'coding': [{'system': 'http://loinc.org', 'code': LOINC_code}]},\\n        'valueQuantity': {'value': measured_value, 'unit': UCUM_unit, 'system': 'http://unitsofmeasure.org'},\\n        'interpretation': 'HH' if above_critical_threshold else 'N'\\n      }\\n      IF label_emr == 1:\\n        fhir_condition = {\\n          'resourceType': 'Condition',\\n          'code': {'coding': [{'system': 'http://snomed.info/sct', 'code': SNOMED_code}]}\\n        }\\n\\n### Output\\n    WRITE all records to CSV (one row per patient per draw per scenario)\\n    COMPUTE aggregate statistics per scenario\\n    GENERATE all 8 figures using matplotlib\\n    SAVE figures as high-resolution PNG (300 dpi)\\n    EXPORT parameter manifest as JSON\\n```\",\n  \"keywords\": [\n    \"measurement uncertainty\",\n    \"clinical AI reproducibility\",\n    \"EMR data quality\",\n    \"label noise\",\n    \"diagnostic threshold\"\n  ],\n  \"categories\": [\n    \"Biomedical and Health Sciences\",\n    \"Machine Learning\",\n    \"Health\",\n    \"Artificial Intelligence\",\n    \"Signal Processing\"\n  ],\n  \"abstract\": \"This simulator models the propagation of measurement uncertainty through EMR-derived clinical AI pipelines, faithfully reproducing the three core scenarios described in the source paper: false-critical potassium values from hemolyzed specimens, borderline HbA1c fluctuation across the diabetes diagnostic threshold, and borderline systolic blood pressure oscillation across the hypertension threshold under white-coat effect. The simulator generates a synthetic dataset of 2,000 patients with serial measurements across up to 20 draw occasions, implementing stochastic models of pre-analytical error, instrument calibration drift, and context-dependent measurement bias using FHIR R4-annotated observation records with LOINC, SNOMED CT, and UCUM codes. By propagating these uncertainty sources to binary AI training labels, the simulator quantifies label noise rates, label flip probabilities, and cross-site prevalence discordance as functions of proximity to diagnostic boundaries. Researchers, educators, and clinical AI developers can use the simulator to validate measurement-aware evaluation frameworks, test temporal confirmation logic, and generate evidence for regulatory submissions under the HL7 AI Challenge 2026 standards.\",\n  \"value_proposition\": {\n    \"target_audiences\": [\n      \"Clinical AI developers and data scientists building or validating models on EMR data\",\n      \"Healthcare informaticists and health system analysts evaluating data quality and FHIR interoperability\",\n      \"Biomedical researchers, medical educators, and regulators studying AI reproducibility and measurement standards\"\n    ],\n    \"use_cases\": [\n      \"A clinical AI team can use the synthetic dataset to benchmark their label-cleaning pipeline by injecting known measurement errors and measuring how well their preprocessing recovers true labels.\",\n      \"A health informatics educator can run the simulator interactively to demonstrate to students how diagnostic threshold choice alters disease prevalence in training data without any change in underlying patient physiology.\",\n      \"A regulatory scientist can use the cross-site calibration scenario to generate evidence that a proposed AI model's performance degrades under realistic inter-site measurement variability, supporting a risk-stratified deployment argument.\",\n      \"A FHIR implementation team can extract the annotated synthetic Observation and Condition resources to test their ETL pipelines against realistic but controlled measurement-noisy clinical records.\",\n      \"A biostatistician can run the threshold sensitivity sweep to identify which of their model's biomarker inputs is most sensitive to guideline threshold changes, prioritizing uncertainty quantification efforts.\"\n    ],\n    \"summary\": \"Clinical AI developers routinely treat EMR values as ground truth, yet the source paper demonstrates that pre-analytical errors, calibration drift, and threshold-based coding introduce systematic label noise that is invisible to standard reproducibility audits. This simulator bundle uniquely operationalizes that conceptual argument as executable, reproducible Python code that generates quantitatively grounded synthetic data spanning three clinically important biomarkers, five scenarios, and four simulated sites. Unlike the source paper alone, the simulator allows users to interactively explore how changes in hemolysis rates, calibration bias magnitude, white-coat effect prevalence, or diagnostic threshold position propagate into AI training label error rates \u2014 providing an empirical learning tool unavailable from reading the text. The FHIR R4 annotation layer makes the synthetic data directly usable in HL7-compliant AI development and evaluation pipelines, bridging the gap between the paper's conceptual recommendations and the practical engineering work required to implement measurement-aware clinical AI.\"\n  },\n  \"data_format\": [\"CSV\", \"PNG\", \"JSON\"]\n}",
+  "_provider": "claude",
+  "_dbbun": {
+    "tool": "paper_to_simulator_builder",
+    "version": "3.4.0",
+    "generated_by": "DBbun LLC  |  dbbun.com  |  CAGE 16VU3  |  UEI QY39Y38E6WG8",
+    "run_id": "70c65e7e-d234-4a15-b669-337d4bbf1bbc",
+    "timestamp_utc": "2026-05-28T15:38:11.297654Z",
+    "copyright": "\u00a9 2024-2025 DBbun LLC. All rights reserved."
+  }
+}
