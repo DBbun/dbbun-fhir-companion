@@ -26,6 +26,7 @@ The current bundle includes:
 - 8 generated figures
 - 5 standalone FHIR Bundle JSON examples
 - Reproducible Python code and CSV/JSON outputs
+- Source-context materials in the `input/` folder
 
 ## Core Scenarios
 
@@ -69,13 +70,30 @@ Terminology standards include:
 
 The FHIR examples show how measurement context can become computable, not just descriptive. For example, a potassium observation can reference a hemolyzed specimen, a device/analyzer, an interpretation code, and a measurement-reliability extension.
 
+## Source Materials
+
+The `input/` folder provides context for how the simulator was generated.
+
+It includes:
+
+- `Figure1.png` — conceptual figure describing measurement uncertainty in EMR-derived clinical AI pipelines.
+- `Prompt_May_28_2026.txt` — prompt used to generate the simulator bundle.
+- `SOURCE_MATERIALS.md` — short description of the source concept and why the unpublished manuscript is not included in the public repository.
+
+The unpublished source manuscript is intentionally not included in this repository. The simulator is based on the concept **“Reproducibility in Clinical AI Requires Modeling Measurement Error,”** but the public GitHub repository includes only enough source context for reviewers to understand the simulator’s origin, purpose, and generation process.
+
 ## Repository Structure
 
 ```text
 .
 ├── README.md
+├── LICENSE.md
 ├── Simulator.py
 ├── Spec.json
+├── input/
+│   ├── Figure1.png
+│   ├── Prompt_May_28_2026.txt
+│   └── SOURCE_MATERIALS.md
 ├── fhir_bundles/
 │   ├── scenario_1_false_critical_potassium.json
 │   ├── scenario_2_borderline_hba1c_diabetes_label.json
@@ -145,6 +163,6 @@ Uri Kartoun, PhD, DBbun LLC, 2026.
 
 The work is also related to the broader DBbun concept of turning static scientific materials into executable simulation companions.
 
-## Copyright
+## License
 
-© 2026 DBbun LLC. All rights reserved.
+© 2026 DBbun LLC. All rights reserved. This repository is provided for HL7 AI Challenge 2026 review and evaluation only. See `LICENSE.md`.
