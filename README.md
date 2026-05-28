@@ -24,7 +24,7 @@ The current bundle includes:
 - 124,000 total simulation rows
 - 23 documented simulation parameters
 - 8 generated figures
-- 3 standalone FHIR Bundle JSON examples
+- 5 standalone FHIR Bundle JSON examples
 - Reproducible Python code and CSV/JSON outputs
 
 ## Core Scenarios
@@ -67,20 +67,21 @@ Terminology standards include:
 - **SNOMED CT** for clinical conditions and specimen concepts
 - **UCUM** for measurement units
 
-The FHIR examples are intended to show how measurement context can become computable, not just descriptive. For example, a potassium observation can reference a hemolyzed specimen, a device/analyzer, an interpretation code, and a measurement-reliability extension.
+The FHIR examples show how measurement context can become computable, not just descriptive. For example, a potassium observation can reference a hemolyzed specimen, a device/analyzer, an interpretation code, and a measurement-reliability extension.
 
 ## Repository Structure
 
 ```text
 .
+├── README.md
 ├── Simulator.py
 ├── Spec.json
-├── README.md
-├── NOTICE.txt
 ├── fhir_bundles/
-│   ├── scenario1_false_critical_potassium.json
-│   ├── scenario2_borderline_hba1c.json
-│   └── scenario4_cross_site_calibration.json
+│   ├── scenario_1_false_critical_potassium.json
+│   ├── scenario_2_borderline_hba1c_diabetes_label.json
+│   ├── scenario_3_borderline_sbp_hypertension_label.json
+│   ├── scenario_4_calibration_drift_cross_site.json
+│   └── scenario_5_sensitivity_analysis_threshold_perturbation.json
 └── sim_outputs/
     ├── simulation_outputs.csv
     ├── scenario_summary.csv
@@ -127,7 +128,7 @@ The simulator produces:
 - `sim_outputs/parameters_used.csv` — simulation parameters, units, and provenance
 - `sim_outputs/summary.json` — key metrics and run metadata
 - `sim_outputs/*.png` — generated figures
-- `fhir_bundles/*.json` — FHIR Bundle JSON examples for selected scenarios
+- `fhir_bundles/*.json` — FHIR Bundle JSON examples for all five scenarios
 
 ## Why This Matters
 
@@ -144,6 +145,6 @@ Uri Kartoun, PhD, DBbun LLC, 2026.
 
 The work is also related to the broader DBbun concept of turning static scientific materials into executable simulation companions.
 
-## License and Notice
+## Copyright
 
-© 2026 DBbun LLC. All rights reserved. See `NOTICE.txt` for ownership and usage information.
+© 2026 DBbun LLC. All rights reserved.
